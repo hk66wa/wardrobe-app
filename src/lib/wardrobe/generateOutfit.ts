@@ -15,6 +15,8 @@ export interface GenerateOptions {
   avoid?: string[];
   /** Item ids worn recently -- left out if there's enough else to build an outfit. */
   rest?: Set<string>;
+  /** Items the person locked in place -- kept exactly as-is; only the remaining slots reroll. */
+  locked?: Item[];
 }
 
 function pick<T>(arr: T[]): T | null {
@@ -32,8 +34,14 @@ function forSeason(items: Item[], season: Season | "all"): Item[] {
  * Randomly assembles one outfit candidate: either a dress, or a top+bottom,
  * plus optional shoes/outerwear/accessory when available. Returns null if
  * there isn't enough to build a full outfit (e.g. no bottoms yet).
+ *
+ * `locked` items are kept exactly as given rather than re-picked -- only the
+ * categories that aren't locked get randomized. A locked dress forces the
+ * dress branch (no top/bottom); a locked top and/or bottom forces separates.
  */
-function buildCandidate(pool: Item[]): Item[] | null {
+function buildCandidate(pool: Item[], locked: Item[] = []): Item[] | null {
+  const lockedByCategory = new Map(locked.map((i) => [i.category, i]));
+
   const dresses = pool.filter((i) => i.category === "dress");
   const tops = pool.filter((i) => i.category === "top");
   const bottoms = pool.filter((i) => i.category === "bottom");
@@ -41,24 +49,34 @@ function buildCandidate(pool: Item[]): Item[] | null {
   const shoes = pool.filter((i) => i.category === "shoes");
   const accessories = pool.filter((i) => i.category === "accessory");
 
-  const canDoSeparates = tops.length > 0 && bottoms.length > 0;
-  // Use a dress sometimes, or always if there are no top+bottom pairs.
-  const useDress = dresses.length > 0 && (!canDoSeparates || Math.random() < 0.35);
+  const lockedDress = lockedByCategory.get("dress");
+  const lockedTop = lockedByCategory.get("top");
+  const lockedBottom = lockedByCategory.get("bottom");
+
+  const canDoSeparates = !!(lockedTop || tops.length > 0) && !!(lockedBottom || bottoms.length > 0);
+  const useDress =
+    !!lockedDress ||
+    (!lockedTop && !lockedBottom && dresses.length > 0 && (!canDoSeparates || Math.random() < 0.35));
 
   const base: Item[] = [];
   if (useDress) {
-    base.push(pick(dresses)!);
+    base.push(lockedDress ?? pick(dresses)!);
   } else if (canDoSeparates) {
-    base.push(pick(tops)!, pick(bottoms)!);
+    base.push(lockedTop ?? pick(tops)!, lockedBottom ?? pick(bottoms)!);
   } else {
     return null;
   }
 
-  const shoe = pick(shoes);
+  const shoe = lockedByCategory.get("shoes") ?? pick(shoes);
   if (shoe) base.push(shoe);
 
-  if (outerwear.length > 0 && Math.random() < 0.5) base.push(pick(outerwear)!);
-  if (accessories.length > 0 && Math.random() < 0.4) base.push(pick(accessories)!);
+  const outer = lockedByCategory.get("outerwear");
+  if (outer) base.push(outer);
+  else if (outerwear.length > 0 && Math.random() < 0.5) base.push(pick(outerwear)!);
+
+  const accessory = lockedByCategory.get("accessory");
+  if (accessory) base.push(accessory);
+  else if (accessories.length > 0 && Math.random() < 0.4) base.push(pick(accessories)!);
 
   return base;
 }
@@ -89,13 +107,13 @@ function totalScore(colorScore: number, styleScore: number | null): number {
   return styleScore === null ? colorScore : colorScore * 0.8 + styleScore * 0.2;
 }
 
-function searchPool(pool: Item[], avoidKey: string): GeneratedOutfit | null {
+function searchPool(pool: Item[], avoidKey: string, locked: Item[] = []): GeneratedOutfit | null {
   const attempts = 16;
   let best: { outfit: GeneratedOutfit; total: number } | null = null;
   let repeat: GeneratedOutfit | null = null;
 
   for (let i = 0; i < attempts; i++) {
-    const candidate = buildCandidate(pool);
+    const candidate = buildCandidate(pool, locked);
     if (!candidate) return null; // this pool can't make any outfit
 
     const colorScore = scoreOutfitColors(candidate.map((c) => c.colors));
@@ -134,7 +152,8 @@ export function generateOutfit(
   options: GenerateOptions = {}
 ): GeneratedOutfit | null {
   const pool = forSeason(allItems, season);
-  if (pool.length === 0) return null;
+  const locked = options.locked ?? [];
+  if (pool.length === 0 && locked.length === 0) return null;
 
   const avoidKey = options.avoid ? [...options.avoid].sort().join(",") : "";
 
@@ -143,17 +162,19 @@ export function generateOutfit(
     // Rest worn items category by category: only bring a worn item back if
     // its whole category would otherwise be empty (e.g. she owns one pair of
     // shoes). That way one essential piece doesn't un-rest everything else.
+    // Locked items are exempt from resting -- they were chosen on purpose.
     const restedPool = pool.filter((item) => {
+      if (locked.some((l) => l.id === item.id)) return true;
       if (!rest.has(item.id)) return true;
       const hasFreshAlternative = pool.some(
         (other) => other.category === item.category && !rest.has(other.id)
       );
       return !hasFreshAlternative;
     });
-    const outfit = searchPool(restedPool, avoidKey) ?? searchPool(pool, avoidKey);
+    const outfit = searchPool(restedPool, avoidKey, locked) ?? searchPool(pool, avoidKey, locked);
     if (!outfit) return null;
     return { ...outfit, usedRecentlyWorn: outfit.items.some((i) => rest.has(i.id)) };
   }
 
-  return searchPool(pool, avoidKey);
+  return searchPool(pool, avoidKey, locked);
 }

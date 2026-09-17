@@ -20,11 +20,38 @@ function loadImage(file: File): Promise<HTMLImageElement> {
 }
 
 /**
- * Downscales a photo so its longest side is at most `maxSize` px and re-encodes
- * it as JPEG. Phone photos are often 3-5 MB; this gets them to a few hundred KB
- * so the wardrobe grid loads quickly on mobile data. If anything goes wrong
- * (e.g. an image format the browser can't decode), the original file is
- * returned unchanged so the upload still works.
+ * Quick check for see-through pixels, used to decide whether a resize can
+ * safely flatten to JPEG (no alpha channel) or needs to stay PNG (has one).
+ * Only formats that support alpha are worth checking; JPEG source photos
+ * never have transparency. Samples a small downscaled copy rather than the
+ * full-resolution canvas so this stays cheap even for large photos.
+ */
+function hasTransparency(img: HTMLImageElement): boolean {
+  const size = 32;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return false;
+  ctx.clearRect(0, 0, size, size);
+  ctx.drawImage(img, 0, 0, size, size);
+  const { data } = ctx.getImageData(0, 0, size, size);
+  for (let i = 3; i < data.length; i += 4) {
+    if (data[i] < 255) return true;
+  }
+  return false;
+}
+
+/**
+ * Downscales a photo so its longest side is at most `maxSize` px. Phone
+ * photos are often 3-5 MB; this gets them to a few hundred KB so the
+ * wardrobe grid loads quickly on mobile data. Re-encodes as JPEG normally,
+ * but if the source is a format that can carry transparency (PNG/WebP/GIF)
+ * and actually has see-through pixels -- e.g. a background-removed item photo
+ * for the outfit collage -- it's kept as PNG instead, since JPEG would
+ * flatten the transparent areas to solid black. If anything goes wrong (e.g.
+ * an image format the browser can't decode), the original file is returned
+ * unchanged so the upload still works.
  */
 export async function resizeImage(file: File, maxSize = 1024, quality = 0.85): Promise<File> {
   try {
@@ -33,20 +60,26 @@ export async function resizeImage(file: File, maxSize = 1024, quality = 0.85): P
     const width = Math.round(img.naturalWidth * scale);
     const height = Math.round(img.naturalHeight * scale);
 
+    const canAlpha = /^image\/(png|webp|gif)$/.test(file.type);
+    const keepAlpha = canAlpha && hasTransparency(img);
+
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext("2d");
     if (!ctx) return file;
+    if (keepAlpha) ctx.clearRect(0, 0, width, height);
     ctx.drawImage(img, 0, 0, width, height);
 
+    const outputType = keepAlpha ? "image/png" : "image/jpeg";
     const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", quality)
+      canvas.toBlob(resolve, outputType, keepAlpha ? undefined : quality)
     );
     if (!blob || blob.size >= file.size) return file; // don't make small files bigger
 
     const baseName = file.name.replace(/\.[^.]+$/, "") || "photo";
-    return new File([blob], `${baseName}.jpg`, { type: "image/jpeg" });
+    const ext = keepAlpha ? "png" : "jpg";
+    return new File([blob], `${baseName}.${ext}`, { type: outputType });
   } catch {
     return file;
   }

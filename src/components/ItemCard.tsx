@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ReactNode } from "react";
 import { imageUrl } from "@/lib/wardrobe/api";
 import { Item } from "@/lib/wardrobe/types";
 
@@ -8,18 +9,30 @@ import { Item } from "@/lib/wardrobe/types";
  * Photo card for one item. When `href` is given the whole card is tappable
  * (used in the wardrobe grid to open the edit page). There's deliberately no
  * hover-only button here: hover doesn't exist on phones, so actions live on
- * the edit page instead.
+ * the edit page instead -- except `topRight`, an optional small overlay
+ * button (lock, quick delete, etc.) that callers can pass in directly.
  */
-export default function ItemCard({ item, href }: { item: Item; href?: string }) {
+export default function ItemCard({
+  item,
+  href,
+  topRight,
+}: {
+  item: Item;
+  href?: string;
+  topRight?: ReactNode;
+}) {
   const body = (
     <>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={imageUrl(item.image_path)}
-        alt={item.name ?? item.category}
-        loading="lazy"
-        className="aspect-square w-full object-cover"
-      />
+      <div className="relative">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={imageUrl(item.image_path)}
+          alt={item.name ?? item.category}
+          loading="lazy"
+          className="aspect-square w-full object-cover"
+        />
+        {topRight && <div className="absolute right-1 top-1">{topRight}</div>}
+      </div>
       <div className="p-2">
         <div className="flex items-center justify-between gap-2">
           <p className="truncate text-sm font-medium capitalize">{item.name || item.category}</p>
