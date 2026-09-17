@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+/*
+ * This app's components use hardcoded light-theme Tailwind classes
+ * (text-black, border-black/15, etc.), so we force a light color scheme
+ * rather than following the system dark mode preference -- otherwise
+ * those dark text colors end up unreadable against a dark background.
+ */
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
